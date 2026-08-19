@@ -1,5 +1,10 @@
 FROM python:3.12-slim
 
+RUN apt-get update && apt-get install -y \
+    libnss-mdns \
+    avahi-utils \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:0.8.13 /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
