@@ -7,8 +7,8 @@ import sys
 from typing import NamedTuple
 from urllib.parse import urlsplit
 
+import aiomqtt
 import can
-from aiomqtt import Client as MQTTClient
 from loguru import logger
 from typer import Option, Typer
 
@@ -45,28 +45,33 @@ async def daemon(
     hostname = o.hostname
     port = o.port or (8883 if o.scheme == "mqtts" else 1883)
 
-    logger.info(f"Connecting to MQTT broker at {hostname}:{port}")
-    async with MQTTClient(
-        hostname=hostname,
-        port=port,
-        username=mqtt_config.username,
-        password=mqtt_config.password,
-    ) as client:
-        logger.debug(f"Subscribing to topic {mqtt_config.base_topic}/#")
-        await client.subscribe(f"{mqtt_config.base_topic}/#", qos=1)
-        logger.info(f"Base topic: {mqtt_config.base_topic}")
+    with can.Bus(
+        channel=can_config.channel,
+        interface=can_config.interface,
+        bitrate=CAN_BITRATE,
+    ) as bus:
+        while True:
+            try:
+                logger.info(f"Connecting to MQTT broker at {hostname}:{port}")
+                async with aiomqtt.Client(
+                    hostname=hostname,
+                    port=port,
+                    username=mqtt_config.username,
+                    password=mqtt_config.password,
+                ) as client:
+                    logger.debug(f"Subscribing to topic {mqtt_config.base_topic}/#")
+                    await client.subscribe(f"{mqtt_config.base_topic}/#", qos=1)
+                    logger.info(f"Base topic: {mqtt_config.base_topic}")
 
-        with can.Bus(
-            channel=can_config.channel,
-            interface=can_config.interface,
-            bitrate=CAN_BITRATE,
-        ) as bus:
-            gateway = SyrupCanGateway(
-                bus=bus,
-                mqtt_client=client,
-                mqtt_base_topic=mqtt_config.base_topic,
-            )
-            await gateway.run()
+                    gateway = SyrupCanGateway(
+                        bus=bus,
+                        mqtt_client=client,
+                        mqtt_base_topic=mqtt_config.base_topic,
+                    )
+                    await gateway.run()
+            except* aiomqtt.MqttError as errors:
+                logger.warning(f"MQTT connection lost: {errors}; retrying in 5 seconds")
+            await asyncio.sleep(5)
 
     logger.info("Exiting controller")
 
