@@ -44,26 +44,54 @@ class SyrupCanGateway:
         )
         self.bus.send(msg)
 
-    def _handle_break_set_message(self, bike_id: int, target_pos: int):
+    def _handle_break_set_message(self, bike_id: int, payload: str):
+        target_pos: int = 0
+        keep_enabled: bool = False
+        if payload.isdigit():
+            target_pos = int(payload)
+        else:
+            try:
+                parsed = json.loads(payload)
+                target_pos = int(parsed.get("target_pos", 0))
+                keep_enabled = parsed.get("keep_enabled", False)
+            except json.JSONDecodeError:
+                logger.error("Invalid JSON payload for break/set command: {payload}")
+                return
+            except ValueError:
+                logger.error(
+                    "Invalid target_pos value in JSON payload for break/set "
+                    "command: {payload}"
+                )
+                return
+            except Exception as e:
+                logger.error(f"Unexpected error while handling break/set command: {e}")
+                return
+
         msg = can.Message(
             arbitration_id=CAN_ID_SET_BREAK_POSITION | bike_id,
-            data=struct.pack("<L", target_pos),
+            data=struct.pack("<LB", target_pos, 1 if keep_enabled else 0),
             is_extended_id=False,
         )
         self.bus.send(msg)
 
-    def _handle_break_trim_message(self, bike_id: int, trim_value: int):
-        msg = can.Message(
-            arbitration_id=CAN_ID_SET_BREAK_TRIM | bike_id,
-            data=struct.pack("<L", trim_value),
-            is_extended_id=False,
-        )
-        self.bus.send(msg)
+    def _handle_break_homing_message(self, bike_id: int, payload: str):
+        keep_enabled = False
+        if payload.isdigit():
+            keep_enabled = int(payload) != 0
+        else:
+            try:
+                parsed = json.loads(payload)
+                keep_enabled = parsed.get("keep_enabled", False)
+            except json.JSONDecodeError:
+                logger.error("Invalid JSON payload for break/homing command: {payload}")
+            except Exception as e:
+                logger.error(
+                    f"Unexpected error while handling break/homing command: {e}"
+                )
 
-    def _handle_break_calibrate_message(self, bike_id: int):
         msg = can.Message(
             arbitration_id=CAN_ID_BREAK_CALIBRATE | bike_id,
-            data=[],
+            data=struct.pack("<B", 1 if keep_enabled else 0),
             is_extended_id=False,
         )
         self.bus.send(msg)
@@ -80,20 +108,14 @@ class SyrupCanGateway:
                 self._handle_speedometer_reset_message(0)
             if m := re.search(r"/break/(\d+)/set$", topic):
                 bike_id = int(m.group(1))
-                target_pos = int(payload)
-                self._handle_break_set_message(bike_id, target_pos)
+                self._handle_break_set_message(bike_id, payload)
             elif topic.endswith("/break/set"):
-                target_pos = int(payload)
-                self._handle_break_set_message(0, target_pos)
-            elif m := re.search(r"/break/(\d+)/trim$", topic):
+                self._handle_break_set_message(0, payload)
+            elif m := re.search(r"/break/(\d+)/homing$", topic):
                 bike_id = int(m.group(1))
-                trim_value = int(payload)
-                self._handle_break_trim_message(bike_id, trim_value)
-            elif m := re.search(r"/break/(\d+)/calibrate$", topic):
-                bike_id = int(m.group(1))
-                self._handle_break_calibrate_message(bike_id)
-            elif topic.endswith("/break/calibrate"):
-                self._handle_break_calibrate_message(0)
+                self._handle_break_homing_message(bike_id, payload)
+            elif topic.endswith("/break/homing"):
+                self._handle_break_homing_message(0, payload)
 
     # ---- CAN message handlers ----
 
