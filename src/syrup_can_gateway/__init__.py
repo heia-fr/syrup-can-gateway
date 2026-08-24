@@ -153,7 +153,7 @@ class SyrupCanGateway:
 
     async def _handle_water_scale_message(self, msg: can.Message):
         scale_id = msg.arbitration_id & DEVICE_ID_MASK
-        level = struct.unpack("<L", msg.data)
+        level = struct.unpack("<L", msg.data)[0]
 
         await self.mqtt_client.publish(
             f"{self.mqtt_base_topic}/water/{scale_id}/level",
