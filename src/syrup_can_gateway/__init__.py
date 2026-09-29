@@ -190,7 +190,7 @@ class SyrupCanGateway:
 
         break_level = self.current_break_level.get(bike_id, MAX_BREAK_LEVEL)
         power = 0 if speed == 0 else power_meter.power(speed, break_level)
-        energy = power * dt / 1000
+        energy = power * dt / 1e6
 
         # accumulate energy for the bike
         energy = self.energy.get(bike_id, 0) + energy
