@@ -7,7 +7,7 @@ import json
 import math
 import re
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import can
 from aiomqtt import Client as MQTTClient
@@ -45,9 +45,12 @@ class SyrupCanGateway:
     bus: can.BusABC
     mqtt_client: MQTTClient
     mqtt_base_topic: str
-    current_break_level: dict[int, float]  # bike_id -> break_level
-    power: dict[int, float]  # bike_id -> power in watts
-    energy: dict[int, float]  # bike_id -> energy in joules
+    # bike_id -> break level
+    current_break_level: dict[int, float] = field(default_factory=dict)
+    # bike_id -> power in watts
+    power: dict[int, float] = field(default_factory=dict)
+    # bike_id -> energy in joules
+    energy: dict[int, float] = field(default_factory=dict)
 
     def __post_init__(self):
         for bike_id in range(MIN_BIKE_ID, MAX_BIKE_ID + 1):
