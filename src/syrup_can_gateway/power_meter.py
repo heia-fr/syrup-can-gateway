@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Jacques Supcik <jacques.supci@hefr.ch>
+#
+# SPDX-License-Identifier: MIT
+
 import numpy as np
 
 K0 = [2.5, 3.3, 4.3, 5.5, 6.6, 8.3, 9.5, 11.0]
