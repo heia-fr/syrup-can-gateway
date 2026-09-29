@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "aiomqtt>=2.5.1",
     "loguru>=0.7.3",
+    "numpy>=2.4.6",
     "pyserial>=3.5",
     "python-can[gs-usb]>=4.6.1",
     "typer>=0.27.1",

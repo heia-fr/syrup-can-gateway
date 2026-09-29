@@ -14,7 +14,17 @@ from aiomqtt import Client as MQTTClient
 from can.notifier import MessageRecipient
 from loguru import logger
 
+from syrup_can_gateway import power_meter
+
+MIN_BIKE_ID = 1
+MAX_BIKE_ID = 2
+
 WHEEL_SIZE = 0.7  # meter
+
+MIN_BREAK_LEVEL = 1
+MAX_BREAK_LEVEL = 8
+MAX_STEPS = 1600
+STEPS_PER_LEVEL = MAX_STEPS / (MAX_BREAK_LEVEL - MIN_BREAK_LEVEL)
 
 CAN_CMD_BIKE_SPEED = 0x00 << 3
 CAN_CMD_BIKE_STATUS = 0x01 << 3
@@ -35,6 +45,37 @@ class SyrupCanGateway:
     bus: can.BusABC
     mqtt_client: MQTTClient
     mqtt_base_topic: str
+    current_break_level: dict[int, float]  # bike_id -> break_level
+    power: dict[int, float]  # bike_id -> power in watts
+    energy: dict[int, float]  # bike_id -> energy in joules
+
+    def __post_init__(self):
+        for bike_id in range(MIN_BIKE_ID, MAX_BIKE_ID + 1):
+            self.current_break_level[bike_id] = MAX_BREAK_LEVEL
+            self.power[bike_id] = 0.0
+            self.energy[bike_id] = 0.0
+
+    def save_current_break_levels(self, bike_id: int, break_level: float):
+        if bike_id == 0:
+            for i in range(MIN_BIKE_ID, MAX_BIKE_ID + 1):
+                self.current_break_level[i] = break_level
+        elif MIN_BIKE_ID <= bike_id <= MAX_BIKE_ID:
+            self.current_break_level[bike_id] = break_level
+        else:
+            logger.error(
+                f"Invalid bike_id {bike_id} for saving break level. "
+                f"Must be 0 or between {MIN_BIKE_ID} and {MAX_BIKE_ID}."
+            )
+
+    def save_current_power_levels(self, bike_id: int, power: float, energy: float):
+        if MIN_BIKE_ID <= bike_id <= MAX_BIKE_ID:
+            self.power[bike_id] = power
+            self.energy[bike_id] = energy
+        else:
+            logger.error(
+                f"Invalid bike_id {bike_id} for saving power level. "
+                f"Must be between {MIN_BIKE_ID} and {MAX_BIKE_ID}."
+            )
 
     def _handle_speedometer_reset_message(self, bike_id: int):
         msg = can.Message(
@@ -43,16 +84,18 @@ class SyrupCanGateway:
             is_extended_id=False,
         )
         self.bus.send(msg)
+        self.save_current_power_levels(bike_id, 0.0, 0.0)
+        self.save_current_break_levels(bike_id, MAX_BREAK_LEVEL)
 
     def _handle_break_set_message(self, bike_id: int, payload: str):
-        target_pos: int = 0
+        break_level: float = 0
         keep_enabled: bool = False
         if payload.isdigit():
-            target_pos = int(payload)
+            break_level = float(payload)
         else:
             try:
                 parsed = json.loads(payload)
-                target_pos = int(parsed.get("target_pos", 0))
+                break_level = float(parsed.get("break_level", 0))
                 keep_enabled = parsed.get("keep_enabled", False)
             except json.JSONDecodeError:
                 logger.error("Invalid JSON payload for break/set command: {payload}")
@@ -67,12 +110,28 @@ class SyrupCanGateway:
                 logger.error(f"Unexpected error while handling break/set command: {e}")
                 return
 
+        if break_level < MIN_BREAK_LEVEL:
+            logger.error(
+                f"Invalid break_level value {break_level} for break/set command. "
+                f"Must be greater than or equal to {MIN_BREAK_LEVEL}."
+            )
+            break_level = MIN_BREAK_LEVEL
+        if break_level > MAX_BREAK_LEVEL:
+            logger.error(
+                f"Invalid break_level value {break_level} for break/set command. "
+                f"Must be less than or equal to {MAX_BREAK_LEVEL}."
+            )
+            break_level = MAX_BREAK_LEVEL
+
+        target_pos = int(MAX_BREAK_LEVEL - break_level) * STEPS_PER_LEVEL
+
         msg = can.Message(
             arbitration_id=CAN_ID_SET_BREAK_POSITION | bike_id,
             data=struct.pack("<LB", target_pos, 1 if keep_enabled else 0),
             is_extended_id=False,
         )
         self.bus.send(msg)
+        self.save_current_break_levels(bike_id, break_level)
 
     def _handle_break_homing_message(self, bike_id: int, payload: str):
         keep_enabled = False
@@ -95,6 +154,7 @@ class SyrupCanGateway:
             is_extended_id=False,
         )
         self.bus.send(msg)
+        self.save_current_break_levels(bike_id, MAX_BREAK_LEVEL)
 
     async def mqtt_task(self):
         logger.info("Starting MQTT task")
@@ -122,11 +182,25 @@ class SyrupCanGateway:
     async def _handle_bike_speed_message(self, msg: can.Message):
         bike_id = msg.arbitration_id & DEVICE_ID_MASK
         dt, rotations = struct.unpack("<LL", msg.data)
+        # dt is in microseconds, WHEEL_SIZE is in meters, so speed is in km/h
         speed = 0 if dt == 0 else 3600 * 1000 * WHEEL_SIZE * math.pi / dt
+
+        break_level = self.current_break_level.get(bike_id, MAX_BREAK_LEVEL)
+        power = 0 if speed == 0 else power_meter.power(speed, break_level)
+        energy = power * dt / 1000
+
+        # accumulate energy for the bike
+        energy = self.energy.get(bike_id, 0) + energy
+        self.save_current_power_levels(bike_id, power, energy)
 
         await self.mqtt_client.publish(
             f"{self.mqtt_base_topic}/bike/{bike_id}/speed",
             json.dumps({"speed": speed, "rotations": rotations}),
+            qos=0,
+        )
+        await self.mqtt_client.publish(
+            f"{self.mqtt_base_topic}/bike/{bike_id}/energy",
+            json.dumps({"power": power, "energy": energy}),
             qos=0,
         )
 
@@ -137,7 +211,17 @@ class SyrupCanGateway:
 
         await self.mqtt_client.publish(
             f"{self.mqtt_base_topic}/bike/{bike_id}/status",
-            json.dumps({"speed": speed, "rotations": rotations}),
+            json.dumps(
+                {
+                    "speed": speed,
+                    "rotations": rotations,
+                    "break_level": self.current_break_level.get(
+                        bike_id, MAX_BREAK_LEVEL
+                    ),
+                    "power": self.power.get(bike_id, 0),
+                    "energy": self.energy.get(bike_id, 0),
+                }
+            ),
             qos=0,
         )
 
