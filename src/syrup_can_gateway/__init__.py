@@ -258,6 +258,10 @@ class SyrupCanGateway:
             while True:
                 msg = await reader.get_message()
                 logger.debug(f"Received CAN message: {msg}")
+                if msg.is_error_frame:
+                    logger.warning(f"Received CAN error frame: {msg}")
+                    continue
+
                 cmd = msg.arbitration_id & CMD_MASK
 
                 if cmd == CAN_CMD_BIKE_SPEED:
