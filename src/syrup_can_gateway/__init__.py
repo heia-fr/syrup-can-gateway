@@ -71,13 +71,17 @@ class SyrupCanGateway:
             )
 
     def save_current_power_levels(self, bike_id: int, power: float, energy: float):
-        if MIN_BIKE_ID <= bike_id <= MAX_BIKE_ID:
+        if bike_id == 0:
+            for i in range(MIN_BIKE_ID, MAX_BIKE_ID + 1):
+                self.power[i] = power
+                self.energy[i] = energy
+        elif MIN_BIKE_ID <= bike_id <= MAX_BIKE_ID:
             self.power[bike_id] = power
             self.energy[bike_id] = energy
         else:
             logger.error(
                 f"Invalid bike_id {bike_id} for saving power level. "
-                f"Must be between {MIN_BIKE_ID} and {MAX_BIKE_ID}."
+                f"Must be 0 or between {MIN_BIKE_ID} and {MAX_BIKE_ID}."
             )
 
     def _handle_speedometer_reset_message(self, bike_id: int):
