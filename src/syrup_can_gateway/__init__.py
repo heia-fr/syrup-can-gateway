@@ -126,7 +126,7 @@ class SyrupCanGateway:
             )
             break_level = MAX_BREAK_LEVEL
 
-        target_pos = int(MAX_BREAK_LEVEL - break_level) * STEPS_PER_LEVEL
+        target_pos = int((MAX_BREAK_LEVEL - break_level) * STEPS_PER_LEVEL)
 
         msg = can.Message(
             arbitration_id=CAN_ID_SET_BREAK_POSITION | bike_id,
