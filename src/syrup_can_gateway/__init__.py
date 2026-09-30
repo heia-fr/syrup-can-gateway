@@ -221,7 +221,7 @@ class SyrupCanGateway:
                     "break_level": self.current_break_level.get(
                         bike_id, MAX_BREAK_LEVEL
                     ),
-                    "power": self.power.get(bike_id, 0),
+                    "power": self.power.get(bike_id, 0) if speed > 0 else 0,
                     "energy": self.energy.get(bike_id, 0),
                 }
             ),
